@@ -172,20 +172,15 @@ def split_into_patches_exhaustive_spacing(
         Patch spatial origin info per slice.
     """
     h, w, d = scan.shape
-    # Interpret pixel_spacing input robustly and support separate row/col spacings
-    if len(pixel_spacing) == 2:
-        px = float(pixel_spacing[0])  # Row spacing
-        py = float(pixel_spacing[-1])  # Column spacing
-    elif isinstance(pixel_spacing, (list, tuple, np.ndarray)):
-        px = py = float(pixel_spacing[0])
-    else:
-        # Scalar case
-        px = py = float(pixel_spacing)
+    # pixel_spacing is [row, col]; a scalar or 1-element value is isotropic
+    px, py = np.resize(np.asarray(pixel_spacing, dtype=float), 2)
 
     # If spacing is sentinel -1 (as used elsewhere), fall back to pixel units
     if px != -1 and py != -1:
         # patch_edge_len is given in cm -> convert to mm then to pixels per axis
         patch_edge_len_mm = patch_edge_len * 10.0
+        # cap in mm so the patch stays square if one axis FOV < 26 cm
+        patch_edge_len_mm = min(patch_edge_len_mm, (h - 1) * px, (w - 1) * py)
         patch_edge_h = int(np.round(patch_edge_len_mm / px))  # height in pixels
         patch_edge_w = int(np.round(patch_edge_len_mm / py))  # width in pixels
     else:

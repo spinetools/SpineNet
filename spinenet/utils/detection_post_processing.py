@@ -90,10 +90,9 @@ def make_in_slice_detections(
 
         scan_centroid_channel = np.zeros(scan_shape[0:2]).astype(float)
         centroid_channel_contributions = np.zeros_like(scan_centroid_channel)
-        max_x = transform_info_dicts[slice_idx][0]["x2"]
-        min_x = transform_info_dicts[slice_idx][0]["x1"]
-
-        patch_edge_len = np.abs(max_x - min_x)
+        # [rows, cols] patch size; differs per axis for anisotropic spacing
+        info = transform_info_dicts[slice_idx][0]
+        patch_edge_len = np.array([info["patch_edge_h"], info["patch_edge_w"]])
 
         # resized the centroid channel to transform it into original frame
 
