@@ -90,6 +90,22 @@ including the following keys:
 * `volume`: a np.array of the extracted IVD volume, resized for the grading network.
 * `level_name`: The predicted label of the IVD, e.g. L5-S1, T12-L1, etc.
 
+To extract bigger volumes, e.g. to save them for other models, pass a
+(slices, height, width) `output_shape`. This crops more of the scan around
+each IVD at the same in-plane scale as the default, using real sagittal
+slices with no resampling across slices. Each slice is still rotated and
+scaled in-plane as for grading. Only the default (9, 112, 224) can be graded. You can save each IVD volume to its own file
+using `spinenet.io.save_ivd_volumes`:
+
+.. code-block:: python
+
+    ivd_dicts_big = spnt.get_ivds_from_vert_dicts(
+        vert_dicts, scan.volume, output_shape=(12, 128, 256)
+    )
+    spinenet.io.save_ivd_volumes(ivd_dicts_big, 'ivd_volumes')
+
+.. autofunction:: spinenet.io.save_ivd_volumes
+
 `ivd_dicts` is then passed to the grading network to grade the IVD volumes:
 
 .. code-block:: python

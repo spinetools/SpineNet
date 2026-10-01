@@ -498,7 +498,7 @@ def get_ivd_vol(
         min_y += y_offset
         max_y += y_offset
     if max_y >= volume_rot.shape[0]:
-        y_offset = (abs(max_y) + 1) - volume_rot.shape[0]
+        y_offset = ((abs(max_y) + 1) - volume_rot.shape[0]).astype(int)
         volume_rot = np.concatenate(
             (
                 volume_rot,
@@ -520,7 +520,7 @@ def get_ivd_vol(
         min_x += x_offset
         max_x += x_offset
     if max_x >= volume_rot.shape[1]:
-        x_offset = (abs(max_x) + 1) - volume_rot.shape[1]
+        x_offset = ((abs(max_x) + 1) - volume_rot.shape[1]).astype(int)
         volume_rot = np.concatenate(
             (
                 volume_rot,
@@ -553,7 +553,15 @@ def get_ivd_vol(
     return ivd_vol
 
 
-def get_all_ivd_vol(volume, all_vb_x, all_vb_y, all_vb_mid, all_vb_label):
+def get_all_ivd_vol(
+    volume,
+    all_vb_x,
+    all_vb_y,
+    all_vb_mid,
+    all_vb_label,
+    output_shape=(9, 112, 224),
+):
+    # output_shape is (slices, height, width) of each IVD volume
     # VBs intensity values
     vbs_intensity = get_vbs_intensity(
         volume, all_vb_x, all_vb_y, all_vb_mid, all_vb_label
@@ -562,7 +570,10 @@ def get_all_ivd_vol(volume, all_vb_x, all_vb_y, all_vb_mid, all_vb_label):
     # Get volumes
     ivds = []
     norm_med = 0.5
-    patch_size = (192, 320)
+    n_slices, height, width = output_shape
+    # the IVD box is scaled to a fixed size in the patch, so a bigger patch
+    # only adds context around it
+    patch_size = (max(192, height), max(320, width))
     no_of_ivd = len(vbs_intensity) - 1
     for ivd_idx in range(no_of_ivd):
         curr_ivd_mid = np.round(
@@ -590,9 +601,9 @@ def get_all_ivd_vol(volume, all_vb_x, all_vb_y, all_vb_mid, all_vb_label):
             patch_size,
         )
 
-        # Centered & choose 15 slices; TO-DO: resize 3D
+        # Centered native slices, zeros outside the scan
         ivd_vol_centered = []
-        for j in range(-7, 7 + 1, 1):
+        for j in range(-(n_slices // 2), n_slices - n_slices // 2):
             curr_slice = curr_ivd_mid + j
             if (curr_slice < 0) | (curr_slice >= ivd_vol.shape[2]):
                 temp_IVD = np.zeros(patch_size)
@@ -602,12 +613,12 @@ def get_all_ivd_vol(volume, all_vb_x, all_vb_y, all_vb_mid, all_vb_label):
         ivd_vol_centered = np.transpose(np.array(ivd_vol_centered), (1, 2, 0)).astype(
             float
         )
-        num_rows, num_cols, num_slices = ivd_vol_centered.shape
-        max_cols = num_cols - 48
-        min_cols = 48
-        max_rows = num_rows - 40
-        min_rows = 40
-        ivd_vol_centered = ivd_vol_centered[min_rows:max_rows, min_cols:max_cols, 3:12]
+        # Central crop; 40 rows and 48 cols per side for the default shape
+        min_rows = (patch_size[0] - height) // 2
+        min_cols = (patch_size[1] - width) // 2
+        ivd_vol_centered = ivd_vol_centered[
+            min_rows : min_rows + height, min_cols : min_cols + width
+        ]
         ivd_vol_centered = np.transpose(ivd_vol_centered, (2, 0, 1))
         ivds.append(ivd_vol_centered)
     ivds = np.array(ivds)
