@@ -12,7 +12,11 @@ from pathlib import Path
 
 import spinenet
 from spinenet import SpineNet, download_example_scan
-from spinenet.io import load_dicoms_from_folder, save_vert_dicts_to_csv
+from spinenet.io import (
+    load_dicoms_from_folder,
+    save_vert_dicts_to_csv,
+    save_ivd_volumes,
+)
 
 
 @pytest.fixture(scope="session")
@@ -136,6 +140,27 @@ class TestResultsSaving:
         lines = content.strip().split('\n')
         assert len(lines) > 1, "CSV should have header and at least one data row"
         assert ',' in lines[0], "CSV should be comma-separated"
+
+    def test_ivd_volume_export(
+        self, detection_results, loaded_scan, spinenet_model, tmp_path
+    ):
+        """Test extracting bigger IVD volumes and saving them."""
+        default = spinenet_model.get_ivds_from_vert_dicts(
+            detection_results, loaded_scan.volume
+        )
+        ivd_dicts = spinenet_model.get_ivds_from_vert_dicts(
+            detection_results, loaded_scan.volume, output_shape=(12, 128, 256)
+        )
+        paths = save_ivd_volumes(ivd_dicts, str(tmp_path))
+        assert len(paths) == len(ivd_dicts) == len(default) > 0
+        for path, ivd_dict, small in zip(paths, ivd_dicts, default):
+            assert path.endswith(f"{ivd_dict['level_name']}.npy")
+            vol = np.load(path)
+            assert vol.shape == (12, 128, 256), "Volume should match shape"
+            assert np.isfinite(vol).all() and vol.max() > 0
+            np.testing.assert_array_equal(
+                ivd_dict["volume"][2:11, 8:120, 16:240], small["volume"]
+            )
 
 
 class TestIntegration:
