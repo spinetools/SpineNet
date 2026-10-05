@@ -553,6 +553,33 @@ def get_ivd_vol(
     return ivd_vol
 
 
+def get_ivd_affine(scan_shape, x, y, curr_ivd_mid, patch_size, output_shape):
+    """4x4 affine from IVD voxel (slice, row, col) to scan voxel (row, col, slice)."""
+    # Rotation, as in rotate_bb_and_volume: scan (x, y) -> rotated slice (qx, qy)
+    theta = np.degrees(np.arctan2(y[0] - y[3], x[0] - x[3]))
+    qx, qy = rotate_bb(np.array(x), np.array(y), scan_shape[1], scan_shape[0], theta)
+    # Crop box, as in get_ivd_vol: 50% more width per side, 2:1 aspect, patch border
+    w = max(qx) - min(qx)
+    min_x, max_x = min(qx) - w * 0.5, max(qx) + w * 0.5
+    extra_vert = ((max_x - min_x) / 2 - (max(qy) - min(qy))) * 0.5
+    min_y, max_y = min(qy) - extra_vert, max(qy) + extra_vert
+    extra_w = ((patch_size[1] - 227.0) / 2.0) * ((max_x - min_x) / 227.0)
+    extra_h = ((patch_size[0] - 113.5) / 2.0) * ((max_y - min_y) / 113.5)
+    min_x, max_x = np.round(min_x - extra_w), np.round(max_x + extra_w)
+    min_y, max_y = np.round(min_y - extra_h), np.round(max_y + extra_h)
+    # IVD voxel -> rotated (x, y, 1): central crop, then cv2.resize (pixel centres)
+    n_slices, out_height, out_width = output_shape
+    scale_x, scale_y = (max_x - min_x) / patch_size[1], (max_y - min_y) / patch_size[0]
+    x0 = min_x + ((patch_size[1] - out_width) // 2 + 0.5) * scale_x - 0.5
+    y0 = min_y + ((patch_size[0] - out_height) // 2 + 0.5) * scale_y - 0.5
+    to_rotated = [[0, 0, scale_x, x0], [0, scale_y, 0, y0], [0, 0, 0, 1]]
+    # Rotated slice -> scan (x, y): rotation by -theta, pinned on the first corner
+    rotate_back = cv2.getRotationMatrix2D((0, 0), -theta, scale=1)
+    rotate_back[:, 2] = (x[0], y[0]) - np.dot(rotate_back[:, :2], (qx[0], qy[0]))
+    col, row = np.dot(rotate_back, to_rotated)
+    return np.array([row, col, [1, 0, 0, curr_ivd_mid - n_slices // 2], [0, 0, 0, 1]])
+
+
 def get_all_ivd_vol(
     volume,
     all_vb_x,
@@ -560,6 +587,7 @@ def get_all_ivd_vol(
     all_vb_mid,
     all_vb_label,
     output_shape=(9, 112, 224),
+    return_affines=False,
 ):
     # output_shape is (slices, height, width) of each IVD volume
     # VBs intensity values
@@ -569,6 +597,7 @@ def get_all_ivd_vol(
 
     # Get volumes
     ivds = []
+    affines = []
     norm_med = 0.5
     n_slices, height, width = output_shape
     # the IVD box is scaled to a fixed size in the patch, so a bigger patch
@@ -621,7 +650,13 @@ def get_all_ivd_vol(
         ]
         ivd_vol_centered = np.transpose(ivd_vol_centered, (2, 0, 1))
         ivds.append(ivd_vol_centered)
+        affine = get_ivd_affine(
+            volume.shape, ivd_curr_x, ivd_curr_y, curr_ivd_mid, patch_size, output_shape
+        )
+        affines.append(affine)
     ivds = np.array(ivds)
+    if return_affines:
+        return ivds, np.array(affines)
     return ivds
 
 

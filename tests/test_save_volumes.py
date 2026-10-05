@@ -9,6 +9,7 @@ import pytest
 
 from spinenet import SpineNet
 from spinenet.io import save_ivd_volumes
+from spinenet.utils import gen_utils
 
 
 @pytest.fixture
@@ -51,10 +52,17 @@ def test_invalid_inputs(ivd_dicts, tmp_path):
         save_ivd_volumes(ivd_dicts, str(tmp_path), file_format="png")
     with pytest.raises(ValueError):
         save_ivd_volumes(ivd_dicts * 2, str(tmp_path))
+    # a scan affine needs the 'voxel_to_scan' of each IVD
+    with pytest.raises(KeyError):
+        save_ivd_volumes(
+            ivd_dicts, str(tmp_path), "nii.gz", scan_affine=np.eye(4)
+        )
 
 
-def synthetic_vert_dicts(cx, bottom_cy, n_slices=12):
-    """Four axis-aligned 80x60 px vertebrae stacked up from bottom_cy."""
+def synthetic_vert_dicts(cx, bottom_cy, n_slices=12, tilt=0):
+    """Four 80x60 px vertebrae stacked up from bottom_cy, axis-aligned or
+    rotated by tilt degrees about the lowest one."""
+    cos, sin = np.cos(np.deg2rad(tilt)), np.sin(np.deg2rad(tilt))
     vert_dicts = []
     for i, label in enumerate(["S1", "L5", "L4", "L3"]):
         cy = bottom_cy - i * 76
@@ -64,6 +72,14 @@ def synthetic_vert_dicts(cx, bottom_cy, n_slices=12):
             [cx - 40, cy + 30],
             [cx - 40, cy - 30],
         ]
+        if tilt:
+            poly = [
+                [
+                    cx + (x - cx) * cos - (y - bottom_cy) * sin,
+                    bottom_cy + (x - cx) * sin + (y - bottom_cy) * cos,
+                ]
+                for x, y in poly
+            ]
         vert_dicts.append(
             {
                 "predicted_label": label,
@@ -121,3 +137,58 @@ def test_invalid_output_shape_and_grading_guard():
     big = extract(output_shape=(12, 128, 256))
     with pytest.raises(ValueError, match="9, 112, 224"):
         SpineNet.__new__(SpineNet).grade_ivds(big)
+
+
+@pytest.mark.parametrize("tilt", [0, 15, -25])
+@pytest.mark.parametrize(
+    "output_shape", [(9, 112, 224), (12, 128, 256), (9, 200, 330)]
+)
+def test_voxel_to_scan_follows_extraction(monkeypatch, tilt, output_shape):
+    # fixed vertebra median, so that volume == scan / 1000 without clipping
+    monkeypatch.setattr(
+        gen_utils,
+        "get_vbs_intensity",
+        lambda volume, all_vb_x, *args: [np.full(1, 250.0)] * 4,
+    )
+    spnt = SpineNet.__new__(SpineNet)
+    vert_dicts = synthetic_vert_dicts(256, 330, n_slices=14, tilt=tilt)
+    # (slice, row, col, 1) of every voxel of an IVD volume
+    index = np.stack([*np.indices(output_shape), np.ones(output_shape)], -1)
+    # scans that hold their own row, column and slice index
+    for axis, coordinate in enumerate(np.indices((448, 512, 14))):
+        ivd_dicts = spnt.get_ivds_from_vert_dicts(
+            vert_dicts, 200.0 + coordinate, output_shape=output_shape
+        )
+        assert len(ivd_dicts) == 3
+        for ivd_dict in ivd_dicts:
+            in_scan = (index @ ivd_dict["voxel_to_scan"].T)[..., axis]
+            error = ivd_dict["volume"] * 1000 - 200 - in_scan
+            # cv2 cubic interpolation is only exact to ~0.1 px on a ramp
+            assert np.abs(error).max() < 0.2
+            assert abs(error.mean()) < 0.01
+
+
+def test_nifti_affine(tmp_path):
+    ivd_dicts = extract(output_shape=(12, 128, 256))
+    # rows -> inferior, columns -> posterior, slices -> right, in mm
+    scan_affine = np.array(
+        [[0, 0, 4, -20], [0, -0.5, 0, 90], [-0.5, 0, 0, 120], [0, 0, 0, 1.0]]
+    )
+    paths = save_ivd_volumes(
+        ivd_dicts, str(tmp_path), "nii.gz", scan_affine=scan_affine
+    )
+    for path, ivd_dict in zip(paths, ivd_dicts):
+        img = nib.load(path)
+        affine = scan_affine @ ivd_dict["voxel_to_scan"]
+        np.testing.assert_allclose(img.affine, affine, atol=1e-4)
+        assert nib.aff2axcodes(img.affine) == ("R", "I", "P")
+        # 4 mm slices; the 80 px wide discs are scaled to 113.5 px, at 0.5 mm
+        np.testing.assert_allclose(
+            img.header.get_zooms(),
+            (4, 0.5 * 80 / 113.5, 0.5 * 80 / 113.5),
+            rtol=0.01,
+        )
+    # without a scan affine, the header keeps the identity
+    path = save_ivd_volumes(ivd_dicts[:1], str(tmp_path / "vox"), "nii.gz")[0]
+    np.testing.assert_array_equal(nib.load(path).affine, np.eye(4))
+

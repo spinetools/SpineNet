@@ -225,6 +225,7 @@ class SpineNet:
         -------
         IVDDicts
             A list of dictionaries containing resampled IVD volumes and the corresponding names
+            and 'voxel_to_scan', the 4x4 affine from IVD (slice, row, col) to scan (row, col, slice)
         '''
         if len(output_shape) != 3 or min(output_shape) < 1:
             raise ValueError(
@@ -237,16 +238,19 @@ class SpineNet:
             all_vb_label,
             vb_level_names,
         ) = vert_dicts_to_classification_format(vert_dicts, scan_volume.shape[-1])
-        ivds = get_all_ivd_vol(
+        ivds, ivd_affines = get_all_ivd_vol(
             scan_volume,
             all_vb_x,
             all_vb_y,
             all_vb_mid,
             all_vb_label,
             output_shape,
+            return_affines=True,
         )
         ivd_level_names = get_ivd_level_names(vb_level_names)
         ivd_dicts = [{"volume": ivd, "level_name": level_name} for ivd, level_name in zip(ivds, ivd_level_names)]
+        for ivd_dict, affine in zip(ivd_dicts, ivd_affines):
+            ivd_dict["voxel_to_scan"] = affine
         return ivd_dicts
 
     def grade_ivds(self, ivd_dicts : IVDDicts) -> pd.DataFrame:
