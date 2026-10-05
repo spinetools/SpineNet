@@ -1,6 +1,6 @@
 [project]
 name = "spinenet"
-version = "2.1.0"
+version = "2.1.1"
 description = "Automated software for analysing clinical spinal MRI scans."
 readme = "README.md"
 authors = [
