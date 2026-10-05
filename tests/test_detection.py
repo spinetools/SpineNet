@@ -8,6 +8,8 @@ import os
 import pytest
 import torch
 import numpy as np
+import nibabel as nib
+from nibabel.processing import resample_from_to
 from pathlib import Path
 
 import spinenet
@@ -25,10 +27,10 @@ def setup_weights():
     spinenet.download_weights(verbose=True, force=False)
 
 
-@pytest.fixture(scope="session")
-def example_scan_folder(tmp_path_factory, setup_weights):
-    """Download example scan data once per session."""
-    scan_name = 't2_lumbar_scan_1'
+@pytest.fixture(scope="session", params=['t2_lumbar_scan_1', 't2_lumbar_scan_2'])
+def example_scan_folder(request, tmp_path_factory, setup_weights):
+    """Download each example scan once per session."""
+    scan_name = request.param
     folder = tmp_path_factory.mktemp('example_scans')
     download_example_scan(scan_name, file_path=str(folder))
     return folder / scan_name
@@ -155,12 +157,39 @@ class TestResultsSaving:
         assert len(paths) == len(ivd_dicts) == len(default) > 0
         for path, ivd_dict, small in zip(paths, ivd_dicts, default):
             assert path.endswith(f"{ivd_dict['level_name']}.npy")
+            assert ivd_dict["voxel_to_scan"].shape == (4, 4)
             vol = np.load(path)
             assert vol.shape == (12, 128, 256), "Volume should match shape"
             assert np.isfinite(vol).all() and vol.max() > 0
             np.testing.assert_array_equal(
                 ivd_dict["volume"][2:11, 8:120, 16:240], small["volume"]
             )
+
+    def test_ivd_nifti_header(
+        self, detection_results, loaded_scan, spinenet_model, tmp_path
+    ):
+        """Test that the NIfTI header puts each IVD volume on its disc."""
+        scan = loaded_scan
+        scan_affine = np.diag([*scan.pixel_spacing, scan.slice_thickness, 1.0])
+        scan_img = nib.Nifti1Image(scan.volume.astype(np.float32), scan_affine)
+        ivd_dicts = spinenet_model.get_ivds_from_vert_dicts(
+            detection_results, scan.volume, output_shape=(12, 128, 256)
+        )
+        paths = save_ivd_volumes(
+            ivd_dicts, str(tmp_path), "nii.gz", scan_affine=scan_affine
+        )
+        assert len(paths) > 0
+        for path in paths:
+            ivd_img = nib.load(path)
+            vol = ivd_img.get_fdata()
+            # the scan, resampled onto the grid given by the IVD header
+            ref = resample_from_to(
+                scan_img, ivd_img, order=1, cval=np.nan
+            ).get_fdata()
+            # intensities are scaled per disc and clipped; skip the padding
+            mask = np.isfinite(ref) & (vol > 0) & (vol < vol.max())
+            corr = np.corrcoef(ref[mask], vol[mask])[0, 1]
+            assert corr > 0.995, f"{os.path.basename(path)}: {corr:.4f}"
 
 
 class TestIntegration:

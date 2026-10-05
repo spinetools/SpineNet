@@ -89,6 +89,8 @@ including the following keys:
 
 * `volume`: a np.array of the extracted IVD volume, resized for the grading network.
 * `level_name`: The predicted label of the IVD, e.g. L5-S1, T12-L1, etc.
+* `voxel_to_scan`: a 4x4 affine from a (slice, row, col) index of `volume` to the
+  (row, col, slice) index of the scan.
 
 To extract bigger volumes, e.g. to save them for other models, pass a
 (slices, height, width) `output_shape`. This crops more of the scan around
@@ -103,6 +105,17 @@ using `spinenet.io.save_ivd_volumes`:
         vert_dicts, scan.volume, output_shape=(12, 128, 256)
     )
     spinenet.io.save_ivd_volumes(ivd_dicts_big, 'ivd_volumes')
+
+To save NIfTI files with the position, orientation and voxel sizes of each IVD
+in their header, pass the voxel-to-world affine of the scan volume:
+
+.. code-block:: python
+
+    # e.g. nib.load(path).affine, or, for the voxel sizes in mm only,
+    # np.diag([*scan.pixel_spacing, scan.slice_thickness, 1])
+    spinenet.io.save_ivd_volumes(
+        ivd_dicts_big, 'ivd_volumes', file_format='nii.gz', scan_affine=scan_affine
+    )
 
 .. autofunction:: spinenet.io.save_ivd_volumes
 

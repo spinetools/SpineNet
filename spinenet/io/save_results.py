@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from csv import DictWriter
 import numpy as np
 import pandas as pd
@@ -37,11 +37,23 @@ def check_no_keys_missing(vert_dicts, required_keys):
                 raise KeyError(f'{key} is missing from vert_dict')
 
 
+def get_ivd_nifti_affine(ivd_dict, scan_affine=None):
+    '''
+    The NIfTI affine of an IVD volume: the identity, overridden with the IVD
+    voxel -> scan voxel -> world affine if the 4x4 voxel-to-world
+    `scan_affine` of the scan volume is given.
+    '''
+    if scan_affine is None:
+        return np.eye(4)
+    return scan_affine @ ivd_dict['voxel_to_scan']
+
+
 def save_ivd_volumes(
     ivd_dicts: List[Dict],
     out_dir: str,
     file_format: str = 'npy',
     prefix: str = '',
+    scan_affine: Optional[np.ndarray] = None,
 ) -> List[str]:
     '''
     Saves each IVD volume to its own float32 file, without resampling.
@@ -66,6 +78,11 @@ def save_ivd_volumes(
     prefix: str, optional
         Added to the start of each file name, e.g. the scan name. The
         default is ''.
+    scan_affine: np.ndarray, optional
+        The 4x4 voxel-to-world affine of the scan volume, e.g.
+        `nib.load(path).affine`. NIfTI files then get the affine
+        `scan_affine @ ivd_dict['voxel_to_scan']` instead of the identity
+        (see `get_ivd_nifti_affine`).
 
     Returns
     -------
@@ -91,6 +108,7 @@ def save_ivd_volumes(
         if file_format == 'npy':
             np.save(path, volume)
         else:
-            nib.save(nib.Nifti1Image(volume, np.eye(4)), path)
+            affine = get_ivd_nifti_affine(ivd_dict, scan_affine)
+            nib.save(nib.Nifti1Image(volume, affine), path)
         paths.append(path)
     return paths
