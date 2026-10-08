@@ -79,7 +79,9 @@ To do this, you can use the :py:func:`spinenet.SpineNet.get_ivds_from_vert_dicts
 
 .. code-block:: python
 
-    ivd_dicts = spnt.get_ivds_from_vert_dicts(vert_dicts, scan.vol)
+    ivd_dicts = spnt.get_ivds_from_vert_dicts(
+        vert_dicts, scan.vol, pixel_spacing=scan.pixel_spacing
+    )
 
 .. autofunction:: spinenet.SpineNet.get_ivds_from_vert_dicts
 
@@ -102,7 +104,8 @@ using `spinenet.io.save_ivd_volumes`:
 .. code-block:: python
 
     ivd_dicts_big = spnt.get_ivds_from_vert_dicts(
-        vert_dicts, scan.volume, output_shape=(12, 128, 256)
+        vert_dicts, scan.volume, output_shape=(12, 128, 256),
+        pixel_spacing=scan.pixel_spacing,
     )
     spinenet.io.save_ivd_volumes(ivd_dicts_big, 'ivd_volumes')
 

@@ -9,7 +9,7 @@ import pytest
 
 from spinenet import SpineNet
 from spinenet.io import save_ivd_volumes
-from spinenet.utils import gen_utils
+from spinenet.utils import extract_volumes, gen_utils
 
 
 @pytest.fixture
@@ -166,6 +166,57 @@ def test_voxel_to_scan_follows_extraction(monkeypatch, tilt, output_shape):
             # cv2 cubic interpolation is only exact to ~0.1 px on a ramp
             assert np.abs(error).max() < 0.2
             assert abs(error.mean()) < 0.01
+
+
+@pytest.mark.parametrize("step", [(1, 2), (2, 1)])
+@pytest.mark.parametrize("tilt", [0, 20, -20])
+def test_non_square_pixels(monkeypatch, step, tilt):
+    # fixed vertebra median, so that volume == scan / 1000 without clipping
+    monkeypatch.setattr(
+        gen_utils,
+        "get_vbs_intensity",
+        lambda volume, all_vb_x, *args: [np.full(1, 250.0)] * 4,
+    )
+    spnt = SpineNet.__new__(SpineNet)
+    # big enough to keep the volumes around the vertebrae inside the scan
+    rows, cols, _ = np.indices((640, 512, 14))
+    scan = 200 + 50 * np.sin(rows / 12) * np.cos(cols / 16)
+    vert_dicts = synthetic_vert_dicts(256, 420, n_slices=14, tilt=tilt)
+    square = spnt.get_ivds_from_vert_dicts(vert_dicts, scan)
+    square_verts = extract_volumes(scan, [dict(v) for v in vert_dicts])
+    # the same scan with every second row or column, at twice the spacing
+    scan = scan[:: step[0], :: step[1]]
+    pixel_spacing = 0.5 * np.array(step)
+    for vert_dict in vert_dicts:
+        for key in ["average_polygon", "polys"]:
+            vert_dict[key] = np.array(vert_dict[key]) / step[::-1]
+
+    ivd_dicts = spnt.get_ivds_from_vert_dicts(
+        vert_dicts, scan, pixel_spacing=pixel_spacing
+    )
+    for ivd_dict, square_dict in zip(ivd_dicts, square):
+        # the same crop as on square pixels
+        error = (ivd_dict["volume"] - square_dict["volume"]) * 1000
+        assert np.abs(error).max() < 1
+        to_scan = ivd_dict["voxel_to_scan"]
+        np.testing.assert_allclose(
+            np.diag([*step, 1, 1]) @ to_scan, square_dict["voxel_to_scan"]
+        )
+        # in mm: square voxels along orthogonal axes
+        row_mm, col_mm = (np.diag([*pixel_spacing, 4, 1]) @ to_scan)[:3, 1:3].T
+        assert abs(row_mm @ col_mm) < 1e-9
+        np.testing.assert_allclose(
+            np.linalg.norm(row_mm), np.linalg.norm(col_mm), rtol=0.01
+        )
+    # without the pixel spacing, the crop is another one
+    distorted = spnt.get_ivds_from_vert_dicts(vert_dicts, scan)
+    assert np.abs(distorted[0]["volume"] - square[0]["volume"]).max() > 0.02
+
+    # same for the volumes around the vertebrae
+    verts = extract_volumes(scan, vert_dicts, pixel_spacing=pixel_spacing)
+    for vert_dict, square_dict in zip(verts, square_verts):
+        error = vert_dict["volume"] - square_dict["volume"]
+        assert np.abs(error).max() < 0.01
 
 
 def test_nifti_affine(tmp_path):
