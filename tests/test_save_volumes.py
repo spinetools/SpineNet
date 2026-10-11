@@ -258,7 +258,10 @@ def test_nifti_affine(tmp_path):
 
 
 
-def write_dicom_slices(folder, volume, pixel_spacing, orientation, positions):
+def write_dicom_slices(
+    folder, volume, pixel_spacing, orientation, positions, slice_spacing=None,
+    slice_thickness=3,
+):
     """Write a (rows, columns, slices) volume to one DICOM file per slice."""
     os.makedirs(folder)
     for i in range(volume.shape[-1]):
@@ -275,10 +278,13 @@ def write_dicom_slices(folder, volume, pixel_spacing, orientation, positions):
         ds.PixelData = volume[..., i].astype(np.uint16).tobytes()
         ds.InstanceNumber = i + 1
         ds.PixelSpacing = list(pixel_spacing)
-        ds.SliceThickness = 3
+        if slice_thickness is not None:
+            ds.SliceThickness = slice_thickness
         ds.ImageOrientationPatient = list(orientation)
         if positions is not None:
             ds.ImagePositionPatient = list(positions[i])
+        if slice_spacing is not None:
+            ds.SpacingBetweenSlices = slice_spacing
         ds.save_as(path)
 
 
@@ -368,3 +374,24 @@ def test_dicom_scan_affine(tmp_path, caplog):
     assert SpinalScan(scan, None, None).image_positions is None
     assert get_dicom_affine(None, None, pixel_spacing) is None
     assert get_dicom_affine(positions, [0, 1, 0], pixel_spacing) is None
+
+    # SliceThickness is preferred to SpacingBetweenSlices
+    write_dicom_slices(
+        tmp_path / "both", scan, pixel_spacing, orientation, None, 3.25
+    )
+    loaded = load_dicoms_from_folder(str(tmp_path / "both"))
+    assert loaded.slice_thickness == 3
+    np.testing.assert_array_equal(loaded.affine, np.diag([0.75, 0.5, 3, 1]))
+    # SpacingBetweenSlices only stands in for a missing SliceThickness
+    write_dicom_slices(
+        tmp_path / "spacing", scan, pixel_spacing, orientation, None, 3.25, None
+    )
+    loaded = load_dicoms_from_folder(str(tmp_path / "spacing"))
+    assert loaded.slice_thickness == 3.25
+    np.testing.assert_array_equal(loaded.affine, np.diag([0.75, 0.5, 3.25, 1]))
+    # with neither, the scan is refused as before
+    write_dicom_slices(
+        tmp_path / "neither", scan, pixel_spacing, orientation, None, None, None
+    )
+    with pytest.raises(ValueError, match="SliceThickness"):
+        load_dicoms_from_folder(str(tmp_path / "neither"))

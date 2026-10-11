@@ -91,6 +91,12 @@ def load_dicoms(
 
         for idx, dicom_file in enumerate(dicom_files):
             dicom_files[idx] = overwrite_tags(dicom_file, metadata_overwrites)
+            # SliceThickness is preferred: SpacingBetweenSlices only stands in
+            # for it if it is missing or empty
+            if not dicom_file.get("SliceThickness") and dicom_file.get(
+                "SpacingBetweenSlices"
+            ):
+                dicom_file.SliceThickness = abs(float(dicom_file.SpacingBetweenSlices))
 
         # check relevant tags are present and slices are all sagittal
         for dicom_idx, dicom_file in enumerate(dicom_files):

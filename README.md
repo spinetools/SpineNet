@@ -98,7 +98,7 @@ save_ivd_volumes(ivd_dicts, 'ivd_volumes', file_format='nii.gz',
 `file_format` is `'npy'` (default) or `'nii.gz'`. `scan_affine` sets the affine in the NIfTI header of each IVD volume (as sform and qform, in mm):
 
 - Not given: the identity.
-- `scan.affine`: the position, orientation and voxel sizes of each IVD in the scanner. `load_dicoms_from_folder` sets it from the positions of the DICOM slices, which it keeps in `scan.image_positions` and `scan.image_orientation`. If they have none, it only holds the voxel sizes in mm (pixel spacing and slice thickness).
+- `scan.affine`: the position, orientation and voxel sizes of each IVD in the scanner. `load_dicoms_from_folder` sets it from the positions of the DICOM slices, which it keeps in `scan.image_positions` and `scan.image_orientation`. If they have none, it only holds the voxel sizes in mm (pixel spacing and slice thickness). `SpacingBetweenSlices` is only used as slice thickness if `SliceThickness` is missing.
 - For a scan stored as NIfTI, give its affine to `SpinalScan`. It has to be the affine of the volume exactly as it is passed to SpineNet (height x width x sagittal slices):
 
 ```python
