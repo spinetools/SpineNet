@@ -79,10 +79,10 @@ def save_ivd_volumes(
         Added to the start of each file name, e.g. the scan name. The
         default is ''.
     scan_affine: np.ndarray, optional
-        The 4x4 voxel-to-world affine of the scan volume, e.g.
-        `nib.load(path).affine`. NIfTI files then get the affine
+        The 4x4 voxel-to-world affine of the scan volume, e.g. the `affine`
+        of a `SpinalScan`. NIfTI files then get the affine
         `scan_affine @ ivd_dict['voxel_to_scan']` instead of the identity
-        (see `get_ivd_nifti_affine`).
+        (see `get_ivd_nifti_affine`), as sform and qform, with mm as units.
 
     Returns
     -------
@@ -109,6 +109,11 @@ def save_ivd_volumes(
             np.save(path, volume)
         else:
             affine = get_ivd_nifti_affine(ivd_dict, scan_affine)
-            nib.save(nib.Nifti1Image(volume, affine), path)
+            img = nib.Nifti1Image(volume, affine)
+            if scan_affine is not None:
+                # the affine is in mm: also store it as qform and set the units
+                img.set_qform(affine, code='aligned')
+                img.header.set_xyzt_units('mm')
+            nib.save(img, path)
         paths.append(path)
     return paths

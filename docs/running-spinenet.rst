@@ -114,10 +114,10 @@ in their header, pass the voxel-to-world affine of the scan volume:
 
 .. code-block:: python
 
-    # e.g. nib.load(path).affine, or, for the voxel sizes in mm only,
-    # np.diag([*scan.pixel_spacing, scan.slice_thickness, 1])
+    # scan.affine is set from the positions of the DICOM slices; if they have
+    # none, it only holds the pixel spacing and slice thickness
     spinenet.io.save_ivd_volumes(
-        ivd_dicts_big, 'ivd_volumes', file_format='nii.gz', scan_affine=scan_affine
+        ivd_dicts_big, 'ivd_volumes', file_format='nii.gz', scan_affine=scan.affine
     )
 
 .. autofunction:: spinenet.io.save_ivd_volumes

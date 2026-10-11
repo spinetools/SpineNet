@@ -6,9 +6,16 @@ import os
 import nibabel as nib
 import numpy as np
 import pytest
+from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.uid import ImplicitVRLittleEndian
 
 from spinenet import SpineNet
-from spinenet.io import save_ivd_volumes
+from spinenet.io import (
+    SpinalScan,
+    get_dicom_affine,
+    load_dicoms_from_folder,
+    save_ivd_volumes,
+)
 from spinenet.utils import extract_volumes, gen_utils
 
 
@@ -239,7 +246,125 @@ def test_nifti_affine(tmp_path):
             (4, 0.5 * 80 / 113.5, 0.5 * 80 / 113.5),
             rtol=0.01,
         )
+        # the same affine as sform and qform, in mm
+        np.testing.assert_allclose(img.header.get_sform(), affine, atol=1e-4)
+        np.testing.assert_allclose(img.header.get_qform(), affine, atol=1e-3)
+        assert img.header["sform_code"] == img.header["qform_code"] == 2
+        assert img.header.get_xyzt_units()[0] == "mm"
     # without a scan affine, the header keeps the identity
     path = save_ivd_volumes(ivd_dicts[:1], str(tmp_path / "vox"), "nii.gz")[0]
     np.testing.assert_array_equal(nib.load(path).affine, np.eye(4))
+    assert nib.load(path).header.get_xyzt_units()[0] == "unknown"
 
+
+
+def write_dicom_slices(folder, volume, pixel_spacing, orientation, positions):
+    """Write a (rows, columns, slices) volume to one DICOM file per slice."""
+    os.makedirs(folder)
+    for i in range(volume.shape[-1]):
+        path = os.path.join(folder, f"{i}.dcm")
+        meta = FileMetaDataset()
+        meta.TransferSyntaxUID = ImplicitVRLittleEndian
+        ds = FileDataset(path, {}, file_meta=meta, preamble=b"\0" * 128)
+        ds.Rows, ds.Columns = volume.shape[:2]
+        ds.SamplesPerPixel = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.BitsAllocated = ds.BitsStored = 16
+        ds.HighBit = 15
+        ds.PixelRepresentation = 0
+        ds.PixelData = volume[..., i].astype(np.uint16).tobytes()
+        ds.InstanceNumber = i + 1
+        ds.PixelSpacing = list(pixel_spacing)
+        ds.SliceThickness = 3
+        ds.ImageOrientationPatient = list(orientation)
+        if positions is not None:
+            ds.ImagePositionPatient = list(positions[i])
+        ds.save_as(path)
+
+
+def test_dicom_scan_affine(tmp_path, caplog):
+    scan = np.random.default_rng(0).uniform(100, 200, (512, 512, 12))
+    pixel_spacing = [0.75, 0.5]
+    # sagittal slices, rotated in-plane by 16 degrees: the direction of
+    # increasing column, then of increasing row index, in DICOM LPS+ mm
+    along_row, along_col = np.array([[0, 0.96, 0.28], [0, 0.28, -0.96]])
+    # 3 mm slices with a 0.25 mm gap, stacked from right to left
+    positions = [-20.5, -90.25, 120.75] + np.outer(range(12), [3.25, 0, 0])
+    orientation = [*along_row, *along_col]
+    write_dicom_slices(
+        tmp_path / "dicoms", scan, pixel_spacing, orientation, positions
+    )
+    loaded = load_dicoms_from_folder(str(tmp_path / "dicoms"))
+    assert "ImagePositionPatient" not in caplog.text
+
+    def to_world(index):
+        row, col, sagittal_slice = np.moveaxis(index, -1, 0)[:3, ..., None]
+        lps = (
+            positions[0]
+            + row * pixel_spacing[0] * along_col
+            + col * pixel_spacing[1] * along_row
+            + sagittal_slice * [3.25, 0, 0]
+        )
+        return lps * [-1, -1, 1]  # NIfTI is RAS+
+
+    index = np.array([[0, 0, 0, 1], [511, 0, 0, 1], [0, 511, 0, 1], [7, 9, 11, 1]])
+    np.testing.assert_allclose(
+        (index @ loaded.affine.T)[:, :3], to_world(index), atol=1e-9
+    )
+    assert nib.aff2axcodes(loaded.affine) == ("I", "P", "L")
+    np.testing.assert_allclose(
+        nib.affines.voxel_sizes(loaded.affine), [0.75, 0.5, 3.25]
+    )
+    # the scan keeps the DICOM tags that give the affine
+    np.testing.assert_array_equal(loaded.image_positions, positions)
+    np.testing.assert_array_equal(loaded.image_orientation, orientation)
+    np.testing.assert_array_equal(
+        get_dicom_affine(
+            loaded.image_positions,
+            loaded.image_orientation,
+            loaded.pixel_spacing,
+            loaded.slice_thickness,
+        ),
+        loaded.affine,
+    )
+
+    # the NIfTI header puts every IVD voxel at its position in the scanner
+    spnt = SpineNet.__new__(SpineNet)
+    ivd_dicts = spnt.get_ivds_from_vert_dicts(
+        synthetic_vert_dicts(256, 300),
+        loaded.volume,
+        output_shape=(12, 128, 256),
+        pixel_spacing=loaded.pixel_spacing,
+    )
+    paths = save_ivd_volumes(
+        ivd_dicts, str(tmp_path), "nii.gz", scan_affine=loaded.affine
+    )
+    ivd_index = np.stack([*np.indices((12, 128, 256)), np.ones((12, 128, 256))], -1)
+    for path, ivd_dict in zip(paths, ivd_dicts):
+        img = nib.load(path)
+        np.testing.assert_allclose(
+            (ivd_index @ img.affine.T)[..., :3],
+            to_world(ivd_index @ ivd_dict["voxel_to_scan"].T),
+            atol=1e-3,
+        )
+        zooms = img.header.get_zooms()
+        np.testing.assert_allclose(zooms[0], 3.25, rtol=1e-5)
+        np.testing.assert_allclose(zooms[1], zooms[2], rtol=0.01)
+
+    # without slice positions: the voxel sizes only
+    write_dicom_slices(
+        tmp_path / "no_positions", scan, pixel_spacing, orientation, None
+    )
+    loaded = load_dicoms_from_folder(str(tmp_path / "no_positions"))
+    assert "ImagePositionPatient or ImageOrientationPatient is missing" in caplog.text
+    np.testing.assert_array_equal(loaded.affine, np.diag([0.75, 0.5, 3, 1]))
+    assert loaded.image_positions is None
+    np.testing.assert_array_equal(loaded.image_orientation, orientation)
+    np.testing.assert_array_equal(
+        SpinalScan(scan, pixel_spacing, 3).affine, loaded.affine
+    )
+    assert SpinalScan(scan, pixel_spacing, 3, affine=np.eye(4)).affine[0, 0] == 1
+    # as before, the spacings are not checked when the scan is created
+    assert SpinalScan(scan, None, None).image_positions is None
+    assert get_dicom_affine(None, None, pixel_spacing) is None
+    assert get_dicom_affine(positions, [0, 1, 0], pixel_spacing) is None

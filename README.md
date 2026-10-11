@@ -75,7 +75,6 @@ For a guide on using SpineNet, see the `01-quickstart.ipynb` tutorial notebook.
 SpineNet needs Python 3.9 to 3.11. With it installed (`pip install spinenet`) and the weights downloaded as above, the volume around each intervertebral disc (IVD) can be saved to its own file:
 
 ```python
-import numpy as np
 from spinenet import SpineNet
 from spinenet.io import load_dicoms_from_folder, save_ivd_volumes
 
@@ -90,18 +89,17 @@ ivd_dicts = spnt.get_ivds_from_vert_dicts(
     pixel_spacing=scan.pixel_spacing,
 )
 
-# pixel spacing and slice thickness in mm
-scan_affine = np.diag([*scan.pixel_spacing, scan.slice_thickness, 1])
+# scan.affine: the position, orientation and voxel sizes of the scan in mm
 save_ivd_volumes(ivd_dicts, 'ivd_volumes', file_format='nii.gz',
-                 prefix='scan1_', scan_affine=scan_affine)
+                 prefix='scan1_', scan_affine=scan.affine)
 # -> ivd_volumes/scan1_L4-L5.nii.gz, ...
 ```
 
-`file_format` is `'npy'` (default) or `'nii.gz'`. `scan_affine` sets the affine in the NIfTI header of each IVD volume:
+`file_format` is `'npy'` (default) or `'nii.gz'`. `scan_affine` sets the affine in the NIfTI header of each IVD volume (as sform and qform, in mm):
 
 - Not given: the identity.
-- `np.diag([*scan.pixel_spacing, scan.slice_thickness, 1])`: the voxel sizes in mm, but no position or orientation in the scanner.
-- A real 4x4 voxel-to-world affine, e.g. of a scan stored as NIfTI: the position and orientation in the scanner too. It has to be the affine of the volume exactly as it is passed to SpineNet (height x width x sagittal slices):
+- `scan.affine`: the position, orientation and voxel sizes of each IVD in the scanner. `load_dicoms_from_folder` sets it from the positions of the DICOM slices, which it keeps in `scan.image_positions` and `scan.image_orientation`. If they have none, it only holds the voxel sizes in mm (pixel spacing and slice thickness).
+- For a scan stored as NIfTI, give its affine to `SpinalScan`. It has to be the affine of the volume exactly as it is passed to SpineNet (height x width x sagittal slices):
 
 ```python
 import nibabel as nib
@@ -114,9 +112,8 @@ ornt = nib.orientations.ornt_transform(
 )
 img = img.as_reoriented(ornt)
 spacing = img.header.get_zooms()
-scan = SpinalScan(img.get_fdata(), spacing[:2], spacing[2])
-scan_affine = img.affine
-# then detect and save as above, without the np.diag line
+scan = SpinalScan(img.get_fdata(), spacing[:2], spacing[2], affine=img.affine)
+# then detect and save as above
 ```
 
 ## Citation
