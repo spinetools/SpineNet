@@ -163,7 +163,7 @@ class SpineNet:
         else:
             vert_dicts = detect_ans
 
-        vert_dicts = extract_volumes(volume, vert_dicts)
+        vert_dicts = extract_volumes(volume, vert_dicts, pixel_spacing=pixel_spacing)
         labels_ans = label_verts(
             vert_dicts,
             volume,
@@ -205,6 +205,7 @@ class SpineNet:
         vert_dicts: VertDicts,
         scan_volume: np.ndarray,
         output_shape: Tuple[int, int, int] = (9, 112, 224),
+        pixel_spacing: Union[np.ndarray, List[float], torch.Tensor, None] = None,
     ) -> IVDDicts:
         '''
         Use detected vertebrae from SpineNet's detect_vb function to generate volumes surrounding each IVD.
@@ -220,6 +221,11 @@ class SpineNet:
             crop more or less of the scan around the IVD at the same scale,
             using native sagittal slices (no resampling across slices). Only
             the default (9, 112, 224) can be graded with `grade_ivds`.
+        pixel_spacing : Union[np.ndarray, List[float], torch.Tensor], optional
+            The pixel spacing of the volume, in order height, width, as given
+            to `detect_vb`. Needed if the two differ: the IVDs are then
+            extracted on square pixels of the finer of the two. If not given,
+            the pixels are taken to be square.
         
         Returns
         -------
@@ -246,6 +252,7 @@ class SpineNet:
             all_vb_label,
             output_shape,
             return_affines=True,
+            pixel_spacing=pixel_spacing,
         )
         ivd_level_names = get_ivd_level_names(vb_level_names)
         ivd_dicts = [{"volume": ivd, "level_name": level_name} for ivd, level_name in zip(ivds, ivd_level_names)]

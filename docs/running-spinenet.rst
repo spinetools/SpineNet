@@ -79,7 +79,9 @@ To do this, you can use the :py:func:`spinenet.SpineNet.get_ivds_from_vert_dicts
 
 .. code-block:: python
 
-    ivd_dicts = spnt.get_ivds_from_vert_dicts(vert_dicts, scan.vol)
+    ivd_dicts = spnt.get_ivds_from_vert_dicts(
+        vert_dicts, scan.vol, pixel_spacing=scan.pixel_spacing
+    )
 
 .. autofunction:: spinenet.SpineNet.get_ivds_from_vert_dicts
 
@@ -102,7 +104,8 @@ using `spinenet.io.save_ivd_volumes`:
 .. code-block:: python
 
     ivd_dicts_big = spnt.get_ivds_from_vert_dicts(
-        vert_dicts, scan.volume, output_shape=(12, 128, 256)
+        vert_dicts, scan.volume, output_shape=(12, 128, 256),
+        pixel_spacing=scan.pixel_spacing,
     )
     spinenet.io.save_ivd_volumes(ivd_dicts_big, 'ivd_volumes')
 
@@ -111,10 +114,10 @@ in their header, pass the voxel-to-world affine of the scan volume:
 
 .. code-block:: python
 
-    # e.g. nib.load(path).affine, or, for the voxel sizes in mm only,
-    # np.diag([*scan.pixel_spacing, scan.slice_thickness, 1])
+    # scan.affine is set from the positions of the DICOM slices; if they have
+    # none, it only holds the pixel spacing and slice thickness
     spinenet.io.save_ivd_volumes(
-        ivd_dicts_big, 'ivd_volumes', file_format='nii.gz', scan_affine=scan_affine
+        ivd_dicts_big, 'ivd_volumes', file_format='nii.gz', scan_affine=scan.affine
     )
 
 .. autofunction:: spinenet.io.save_ivd_volumes

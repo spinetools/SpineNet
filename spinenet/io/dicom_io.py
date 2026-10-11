@@ -13,6 +13,9 @@ class SpinalScan:
         volume: np.array,
         pixel_spacing: Union[np.array, list],
         slice_thickness: Union[float, int],
+        affine: Union[np.array, None] = None,
+        image_positions: Union[np.array, None] = None,
+        image_orientation: Union[np.array, None] = None,
     ) -> None:
         """
         Initialize general class for a spinal scan to be used be SpineNet.
@@ -25,10 +28,33 @@ class SpinalScan:
             The pixel spacing of the scan slices in mm. The order is height, width.
         slice_thickness : Union[float, int]
             The distance between consecutive slices in mm.
+        affine : np.array, optional
+            The 4x4 affine from a (height, width, slice) index of the volume to
+            world coordinates in mm (RAS+, as in NIfTI). If not given, it only
+            holds the pixel spacing and slice thickness, without the position
+            or orientation of the scan.
+        image_positions : np.array, optional
+            The DICOM ImagePositionPatient of each slice, of shape (slices, 3).
+        image_orientation : np.array, optional
+            The DICOM ImageOrientationPatient of the slices (6 values). With
+            the image positions, this gives the affine (see `get_dicom_affine`).
         """
         self.volume = volume
         self.pixel_spacing = pixel_spacing
         self.slice_thickness = slice_thickness
+        self.affine = affine
+        self.image_positions = image_positions
+        self.image_orientation = image_orientation
+
+    @property
+    def affine(self) -> np.array:
+        if self._affine is None:
+            return np.diag([*self.pixel_spacing, self.slice_thickness, 1.0])
+        return self._affine
+
+    @affine.setter
+    def affine(self, affine: Union[np.array, None]) -> None:
+        self._affine = affine
 
 
 def load_dicoms(
@@ -94,9 +120,82 @@ def load_dicoms(
             [np.array(dicom_file.pixel_array) for dicom_file in dicom_files], axis=-1
         )
 
-        return SpinalScan(
-            volume=volume, pixel_spacing=pixel_spacing, slice_thickness=slice_thickness
+        # where the slices are in the scanner, kept to give the affine
+        image_positions = [f.get("ImagePositionPatient") for f in dicom_files]
+        if all(np.size(position) == 3 for position in image_positions):
+            image_positions = np.array(image_positions, dtype=float)
+        else:
+            image_positions = None
+        image_orientation = np.array(
+            dicom_files[0].ImageOrientationPatient, dtype=float
         )
+
+        affine = get_dicom_affine(
+            image_positions, image_orientation, pixel_spacing, slice_thickness
+        )
+        if affine is None:
+            logging.warning(
+                "ImagePositionPatient or ImageOrientationPatient is missing or "
+                "malformed in the DICOM slices: the affine of the scan only holds "
+                "the pixel spacing and slice thickness, not its position or orientation"
+            )
+
+        return SpinalScan(
+            volume=volume, pixel_spacing=pixel_spacing, slice_thickness=slice_thickness,
+            affine=affine,
+            image_positions=image_positions,
+            image_orientation=image_orientation,
+        )
+
+
+def get_dicom_affine(
+    image_positions: Union[np.array, None],
+    image_orientation: Union[np.array, list],
+    pixel_spacing: Union[np.array, list],
+    slice_thickness: Union[float, int] = 1.0,
+) -> Union[np.array, None]:
+    '''
+    The affine from a (row, column, slice) index of the stacked slices to
+    world coordinates in mm (RAS+, as in NIfTI), from the position and
+    orientation of the slices in the scanner.
+
+    Parameters
+    ----------
+    image_positions : Union[np.array, None]
+        the ImagePositionPatient of each slice, in the order they are stacked
+        in, of shape (slices, 3)
+    image_orientation : Union[np.array, list]
+        the ImageOrientationPatient of the slices (6 values)
+    pixel_spacing : Union[np.array, list]
+        the pixel spacing of the slices in mm, in order rows, columns
+    slice_thickness : Union[float, int]
+        the distance between slices in mm, only used if the positions of the
+        slices do not give it
+
+    Returns
+    -------
+    Union[np.array, None]
+        the 4x4 affine, or None if the image positions or the 6 values of
+        the image orientation are missing
+    '''
+    if image_positions is None or np.size(image_orientation) != 6:
+        return None
+    positions = np.array(image_positions, dtype=float)
+    # directions of increasing column and row index (DICOM stores them so)
+    col_direction, row_direction = np.array(
+        image_orientation, dtype=float
+    ).reshape(2, 3)
+    slice_step = (positions[-1] - positions[0]) / max(len(positions) - 1, 1)
+    if not slice_step.any():
+        slice_step = np.cross(col_direction, row_direction) * slice_thickness
+    affine = np.eye(4)
+    affine[:3, 0] = row_direction * pixel_spacing[0]
+    affine[:3, 1] = col_direction * pixel_spacing[1]
+    affine[:3, 2] = slice_step
+    affine[:3, 3] = positions[0]
+    # DICOM coordinates are left, posterior, superior (LPS+)
+    affine[:2] *= -1
+    return affine
 
 
 def is_sagittal_dicom_slice(dicom_file: FileDataset) -> bool:

@@ -1,4 +1,4 @@
-from .dicom_io import load_dicoms, SpinalScan, load_dicoms_from_folder
+from .dicom_io import load_dicoms, SpinalScan, load_dicoms_from_folder, get_dicom_affine
 from .download import download, download_weights
 from .save_results import (
     save_vert_dicts_to_csv,
@@ -8,6 +8,7 @@ from .save_results import (
 __all_exports = [
     load_dicoms,
     load_dicoms_from_folder,
+    get_dicom_affine,
     save_vert_dicts_to_csv,
     save_ivd_volumes,
 ]
