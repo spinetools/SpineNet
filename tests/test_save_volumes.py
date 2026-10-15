@@ -5,6 +5,7 @@ import os
 
 import nibabel as nib
 import numpy as np
+import pydicom
 import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ImplicitVRLittleEndian
@@ -13,6 +14,7 @@ from spinenet import SpineNet
 from spinenet.io import (
     SpinalScan,
     get_dicom_affine,
+    load_dicoms,
     load_dicoms_from_folder,
     save_ivd_volumes,
 )
@@ -333,6 +335,29 @@ def test_dicom_scan_affine(tmp_path, caplog):
         ),
         loaded.affine,
     )
+    assert "evenly spaced" not in caplog.text
+    assert "same ImageOrientationPatient" not in caplog.text
+
+    # non-sagittal slices (e.g. localisers) are all left out, even in a row
+    paths = [str(tmp_path / "dicoms" / f"{i}.dcm") for i in range(12)]
+    for name, instance in [("axial_a", 13), ("axial_b", 14)]:
+        ds = pydicom.dcmread(paths[0])
+        ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+        ds.InstanceNumber = instance
+        ds.save_as(tmp_path / f"{name}.dcm")
+    axial = [str(tmp_path / "axial_a.dcm"), str(tmp_path / "axial_b.dcm")]
+    with_axial = load_dicoms(paths[:5] + axial + paths[5:])
+    assert with_axial.volume.shape == (512, 512, 12)
+    np.testing.assert_array_equal(with_axial.affine, loaded.affine)
+    assert caplog.text.count("is not a sagittal dicom slice") == 2
+
+    # the affine cannot hold unevenly spaced slices: warn by how much it is off
+    caplog.clear()
+    uneven = positions.copy()
+    uneven[5] += [1, 0, 0]
+    write_dicom_slices(tmp_path / "uneven", scan, pixel_spacing, orientation, uneven)
+    load_dicoms_from_folder(str(tmp_path / "uneven"))
+    assert "not evenly spaced" in caplog.text and "1.00 mm" in caplog.text
 
     # the NIfTI header puts every IVD voxel at its position in the scanner
     spnt = SpineNet.__new__(SpineNet)

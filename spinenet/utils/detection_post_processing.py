@@ -409,7 +409,7 @@ def get_points(image, threshold=0.5):
     points : a Nx2 array containing the locations of each point detected
     """
 
-    image = np.array(image)
+    image = np.asarray(image)
     mask = image > threshold
     segmentation, no_labels = scipy.ndimage.label(mask)
     points = []
