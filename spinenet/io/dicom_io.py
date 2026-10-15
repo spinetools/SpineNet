@@ -99,6 +99,7 @@ def load_dicoms(
                 dicom_file.SliceThickness = abs(float(dicom_file.SpacingBetweenSlices))
 
         # check relevant tags are present and slices are all sagittal
+        sagittal_files = []
         for dicom_idx, dicom_file in enumerate(dicom_files):
             missing_tags = check_missing_tags(dicom_file)
             if len(missing_tags) > 0:
@@ -106,10 +107,12 @@ def load_dicoms(
                     f"Missing tags in file {paths[dicom_idx]}: {missing_tags}"
                 )
             is_sagittal = is_sagittal_dicom_slice(dicom_file)
-            if not is_sagittal:
-                dicom_files.pop(dicom_idx)
+            if is_sagittal:
+                sagittal_files.append(dicom_file)
+            else:
                 #raise ValueError(
                 logging.warning( f"File at {paths[dicom_idx]} is not a sagittal dicom slice")
+        dicom_files = sagittal_files
         # sort slices by sagittal position
         dicom_files = sorted(
             dicom_files, key=lambda dicom_file: dicom_file.InstanceNumber
@@ -135,6 +138,12 @@ def load_dicoms(
         image_orientation = np.array(
             dicom_files[0].ImageOrientationPatient, dtype=float
         )
+        orientations = [f.ImageOrientationPatient for f in dicom_files]
+        if not np.allclose(np.array(orientations, dtype=float), image_orientation, atol=1e-3):
+            logging.warning(
+                "The DICOM slices do not all have the same ImageOrientationPatient: "
+                "the affine of the scan uses the one of the first slice"
+            )
 
         affine = get_dicom_affine(
             image_positions, image_orientation, pixel_spacing, slice_thickness
@@ -194,6 +203,15 @@ def get_dicom_affine(
     slice_step = (positions[-1] - positions[0]) / max(len(positions) - 1, 1)
     if not slice_step.any():
         slice_step = np.cross(col_direction, row_direction) * slice_thickness
+    # an affine only holds slices evenly spaced along a line
+    expected = positions[0] + np.outer(np.arange(len(positions)), slice_step)
+    if not np.allclose(positions, expected, atol=0.1):
+        logging.warning(
+            "The DICOM slices are not evenly spaced in the order of their "
+            "InstanceNumber: the affine uses the mean step from the first to "
+            "the last slice and is off by up to "
+            f"{np.abs(positions - expected).max():.2f} mm for the others"
+        )
     affine = np.eye(4)
     affine[:3, 0] = row_direction * pixel_spacing[0]
     affine[:3, 1] = col_direction * pixel_spacing[1]
